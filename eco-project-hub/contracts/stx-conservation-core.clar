@@ -16,6 +16,7 @@
 (define-constant ERROR-VOTING-PERIOD-ENDED (err u111))
 (define-constant ERROR-USER-ALREADY-VOTED (err u112))
 (define-constant ERROR-PROJECT-NO-LONGER-ACTIVE (err u113))
+(define-constant ERROR-INVALID-INPUT (err u114))
 
 ;; Conservation Project Categories
 (define-constant conservation-categories 
@@ -36,7 +37,7 @@
         conservation-project-name: (string-ascii 50),
         conservation-project-description: (string-ascii 500),
         project-website-url: (string-ascii 100),
-        conservation-category: (string-ascii 20),
+        conservation-category: (string-ascii 12),
         total-funding-target: uint,
         accumulated-funds: uint,
         project-current-status: (string-ascii 20),
@@ -104,6 +105,29 @@
 (define-data-var minimum-stake-requirement uint u100)
 (define-data-var voting-period-duration uint u1440) ;; 10 days in blocks
 
+;; Helper Functions
+(define-private (is-valid-string (input (string-ascii 500)))
+    (and 
+        (>= (len input) u1)
+        (<= (len input) u500)
+    )
+)
+
+(define-private (is-valid-category (category (string-ascii 12)))
+    (is-some (index-of conservation-categories category))
+)
+
+(define-private (is-valid-project-id (project-id uint))
+    (<= project-id (var-get conservation-project-counter))
+)
+
+(define-private (is-valid-milestone-id (project-id uint) (milestone-id uint))
+    (match (map-get? ConservationProjectDetails { conservation-project-id: project-id })
+        project-data (<= milestone-id (get completed-milestone-count project-data))
+        false
+    )
+)
+
 ;; Contract Initialization
 (define-public (initialize-conservation-contract)
     (begin
@@ -129,7 +153,7 @@
     (project-name (string-ascii 50))
     (project-description (string-ascii 500))
     (project-website (string-ascii 100))
-    (conservation-type (string-ascii 20))
+    (conservation-type (string-ascii 12))
     (funding-target-amount uint)
     (project-duration uint))
     (let
@@ -137,6 +161,10 @@
             (new-project-id (+ (var-get conservation-project-counter) u1))
             (project-completion-height (+ block-height project-duration))
         )
+        (asserts! (is-valid-string project-name) ERROR-INVALID-INPUT)
+        (asserts! (is-valid-string project-description) ERROR-INVALID-INPUT)
+        (asserts! (is-valid-string project-website) ERROR-INVALID-INPUT)
+        (asserts! (is-valid-category conservation-type) ERROR-INVALID-INPUT)
         (asserts! (> funding-target-amount u0) ERROR-INVALID-AMOUNT-PROVIDED)
         (asserts! (> project-duration u0) ERROR-INVALID-TIMESTAMP)
         
@@ -178,8 +206,10 @@
             (project-data (unwrap! (map-get? ConservationProjectDetails { conservation-project-id: conservation-project-id }) ERROR-PROJECT-NOT-FOUND))
             (current-milestone-number (get completed-milestone-count project-data))
         )
+        (asserts! (is-valid-project-id conservation-project-id) ERROR-PROJECT-NOT-FOUND)
         (asserts! (is-eq (get project-creator project-data) tx-sender) ERROR-INSUFFICIENT-PERMISSIONS)
         (asserts! (> milestone-deadline block-height) ERROR-INVALID-TIMESTAMP)
+        (asserts! (is-valid-string milestone-description) ERROR-INVALID-INPUT)
         
         (map-set ConservationMilestoneDetails
             { conservation-project-id: conservation-project-id, milestone-sequence-id: current-milestone-number }
@@ -205,6 +235,8 @@
             (project-data (unwrap! (map-get? ConservationProjectDetails { conservation-project-id: conservation-project-id }) ERROR-PROJECT-NOT-FOUND))
             (milestone-data (unwrap! (map-get? ConservationMilestoneDetails { conservation-project-id: conservation-project-id, milestone-sequence-id: milestone-sequence-id }) ERROR-MILESTONE-NOT-FOUND))
         )
+        (asserts! (is-valid-project-id conservation-project-id) ERROR-PROJECT-NOT-FOUND)
+        (asserts! (is-valid-milestone-id conservation-project-id milestone-sequence-id) ERROR-MILESTONE-NOT-FOUND)
         (asserts! (is-eq (get project-creator project-data) tx-sender) ERROR-INSUFFICIENT-PERMISSIONS)
         (asserts! (not (get milestone-completion-status milestone-data)) ERROR-MILESTONE-ALREADY-APPROVED)
         
@@ -236,10 +268,12 @@
             (project-data (unwrap! (map-get? ConservationProjectDetails { conservation-project-id: conservation-project-id }) ERROR-PROJECT-NOT-FOUND))
             (existing-vote-record (map-get? ConservationVoteRegistry { conservation-project-id: conservation-project-id, voter-wallet-address: tx-sender }))
         )
+        (asserts! (is-valid-project-id conservation-project-id) ERROR-PROJECT-NOT-FOUND)
         (asserts! (is-eq (get project-current-status project-data) "active") ERROR-PROJECT-NO-LONGER-ACTIVE)
         (asserts! (is-none existing-vote-record) ERROR-USER-ALREADY-VOTED)
         (asserts! (>= (- (get project-end-block-height project-data) block-height) (var-get voting-period-duration)) ERROR-VOTING-PERIOD-ENDED)
         (asserts! (> token-stake-amount u0) ERROR-INVALID-AMOUNT-PROVIDED)
+        (asserts! (is-valid-string vote-selection) ERROR-INVALID-INPUT)
         
         (try! (stx-transfer? token-stake-amount tx-sender (as-contract tx-sender)))
         
@@ -274,6 +308,7 @@
         (
             (project-data (unwrap! (map-get? ConservationProjectDetails { conservation-project-id: conservation-project-id }) ERROR-PROJECT-NOT-FOUND))
         )
+        (asserts! (is-valid-project-id conservation-project-id) ERROR-PROJECT-NOT-FOUND)
         (asserts! (is-eq (get project-creator project-data) tx-sender) ERROR-INSUFFICIENT-PERMISSIONS)
         (asserts! (>= trees-planted u0) ERROR-INVALID-AMOUNT-PROVIDED)
         (asserts! (>= protected-area u0) ERROR-INVALID-AMOUNT-PROVIDED)
